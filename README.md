@@ -28,4 +28,23 @@ Produce a visual map highlighting zones with higher solar or wind potential
 7. Limitations 
    No external ground-truth dataset is used
    Accuracy assessment is internal
-   Field surveys and policy constraints are not included
+
+# Accuracy
+Since no external ground-truth dataset exists for renewable energy suitability, the model is evaluated using an internal accuracy assessment approach.
+The labelled samples are randomly split into:
+70% training data
+30% validation data
+
+A Random Forest classifier is trained using the training subset and evaluated on the unseen validation samples.
+
+Metrics used
+1. Confusion Matrix – to examine class-wise performance
+2. Overall Accuracy – percentage of correctly classified samples
+3. Kappa Coefficient – agreement beyond chance
+4. Training (resubstitution) accuracy is also reported for reference, while validation accuracy is treated as the primary performance indicator.
+
+Interpretation
+
+The accuracy results reflect the model’s consistency in learning the provided labels, not real-world installation feasibility.
+Moderate accuracy values are expected due to limited training samples and the exploratory nature of the study.
+Field surveys and policy constraints are not included
