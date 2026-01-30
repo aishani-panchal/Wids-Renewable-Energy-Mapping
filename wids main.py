@@ -1,118 +1,137 @@
 import ee
-import geemap
-
-# Authenticate
+import folium
+#authentication
 try:
     ee.Initialize(project='wids-earth-engine')
 except:
     ee.Authenticate()
     ee.Initialize(project='wids-earth-engine')
-
-# Featured collection to mark the boundaries of Khandesh corridor
-#this corridor is in maharashtra with 3 districts: ["Jalgaon", "Dhule", "Nandurbar"]
+    
+#define region (I used feature collection to define the area)
 gaul = ee.FeatureCollection("FAO/GAUL/2015/level2")
-maharashtra = gaul.filter(ee.Filter.eq("ADM1_NAME", "Maharashtra"))
+mh = gaul.filter(ee.Filter.eq("ADM1_NAME", "Maharashtra"))
 districts = ["Jalgaon", "Dhule", "Nandurbar"]
+roi = mh.filter(ee.Filter.inList("ADM2_NAME", districts))
+geometry = roi.geometry()
 
-khandesh = maharashtra.filter(
-    ee.Filter.inList("ADM2_NAME", districts)
-)
-boundary_only = khandesh.style(
-    **{
-        "color": "000000",      # outline color (only want the outline , no color)
-        "width": 2,
-        "fillColor": "00000000" # transparent fill (RGBA)
-    }
-)
-# storing roi as this collection
-roi = khandesh
+#image data from Sentinel 2
+s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+cs_plus = ee.ImageCollection("GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED")
+cs_bands = cs_plus.first().bandNames()
 
-# NEW: Sentinel-2 cloud masking function
-def mask_s2_sr(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(
-           qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    return image.updateMask(mask).divide(10000)
+start = "2023-01-01"
+end   = "2024-01-01"
 
-# Sentinel-2 data
-s2 = (
-    ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterBounds(roi)
-    .filterDate('2023-01-01', '2024-01-01')
-    .map(mask_s2_sr)    
-    .median()
-    .clip(roi.geometry())
-)
+#basic cloud filtering to take images with less than 40%cloud
+filtered = (s2
+            .filterBounds(geometry)
+            .filterDate(start, end)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40)))
 
-# DEM & slope
-dem = ee.Image('USGS/SRTMGL1_003').clip(roi)
-slope = ee.Terrain.slope(dem)
+#advance cloud filtering
+# Link CS+ bands 
+s2cs = filtered.linkCollection(cs_plus, cs_bands)
+# Cloud mask function
+def mask_cloud(image):
+    mask = image.select("cs").gte(0.5)
+    return image.updateMask(mask)
 
-# ERA5
-climate = (
-    ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY_AGGR")
-    .filterBounds(roi)
-    .filterDate('2023-01-01', '2023-12-31')
-    .median()
-    .clip(roi)
-)
+s2_clean = (s2cs
+            .map(mask_cloud)
+            .select("B.*")
+            .median()
+            .clip(geometry))
 
-# NDVI
-ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI')
+#terrain (slope)
+dem = ee.Image("USGS/SRTMGL1_003").clip(geometry)
+slope  = ee.Terrain.slope(dem)
+aspect = ee.Terrain.aspect(dem)
 
-# Wind speed
-wind_speed = climate.select('u_component_of_wind_10m') \
-    .hypot(climate.select('v_component_of_wind_10m')) \
-    .rename('WindSpeed')
+#NDVI (gives vegatation and land image)
+ndvi = s2_clean.normalizedDifference(["B8", "B4"]).rename("NDVI")
 
-# Solar radiation
-ghi = climate.select('surface_solar_radiation_downwards_sum').rename('GHI')
+# ERA5 (GHI + Temperature)
+era5 = (ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY_AGGR")
+        .filterBounds(geometry)
+        .filterDate(start, end)
+        .median()
+        .clip(geometry))
 
-# Feature stack
-feature_stack = s2.select(['B2', 'B3', 'B4', 'B8']) \
-    .addBands([ndvi, slope, wind_speed, ghi])
+ghi = era5.select("surface_solar_radiation_downwards_sum").rename("GHI")
+temp = era5.select("temperature_2m").subtract(273.15).rename("Temp")
 
-# OPTIONAL UPGRADE: polygon-based training (recommended)
-solar_poly = ee.Geometry.Rectangle([74.42, 20.97, 74.45, 21.00])
-wind_poly = ee.Geometry.Rectangle([74.22, 21.07, 74.25, 21.10])
-neg_poly = ee.Geometry.Rectangle([74.75, 20.85, 74.90, 21.05])
+# Land Cover (ESA WorldCover)
+landcover = ee.Image("ESA/WorldCover/v100/2020").select("Map").clip(geometry)
+
+# Feature Stack
+stack = (s2_clean.select(["B2", "B3", "B4", "B8"])
+         .addBands([ndvi, slope.rename("Slope"), aspect.rename("Aspect"),
+                    ghi, temp, landcover.rename("LC")]))
+                    
+
+# TRAINING POLYGONS
+good_poly = ee.Geometry.Rectangle([74.42, 20.97, 74.45, 21.00])
+bad_poly  = ee.Geometry.Rectangle([74.80, 20.80, 75.0, 21.10])
 
 training_fc = ee.FeatureCollection([
-    ee.Feature(solar_poly, {'class': 1}),
-    ee.Feature(wind_poly, {'class': 2}),
-    ee.Feature(neg_poly, {'class': 0}),
+    ee.Feature(good_poly, {"class": 1}),
+    ee.Feature(bad_poly,  {"class": 0})
 ])
 
-training = feature_stack.sampleRegions(
+training = stack.sampleRegions(
     collection=training_fc,
-    properties=['class'],
+    properties=["class"],
     scale=30
 )
 
-# Classifier (RF retained — best for mixed data)
-classifier = ee.Classifier.smileRandomForest(100).train(
-    training, 'class', feature_stack.bandNames()
+# Gradient Tree Boosting
+classifier = ee.Classifier.smileGradientTreeBoost(
+    numberOfTrees=200,
+    shrinkage=0.05,
+    maxNodes=30
+).train(
+    features=training,
+    classProperty="class",
+    inputProperties=stack.bandNames()
 )
 
-classified = feature_stack.classify(classifier)
+classified = stack.classify(classifier)
 
-# Smart filtering
-solar_sites = classified.eq(1).And(slope.lt(5))
-wind_sites = classified.eq(2).And(wind_speed.gt(2))
+# SPLIT INTO SMALL vs LARGE SOLAR PV
+small_pv = classified.eq(1).And(slope.lt(8))
+large_pv = classified.eq(1).And(slope.lt(5)).And(ndvi.lt(0.3))
 
-# Map
-Map = geemap.Map(center=[21.1, 74.5], zoom=9)
-Map.addLayer(s2, {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 0.3}, 'Sentinel-2')
-Map.addLayer(solar_sites.selfMask(), {'palette': ['orange']}, 'Solar')
-Map.addLayer(wind_sites.selfMask(), {'palette': ['blue']}, 'Wind')
+solar_class = (ee.Image(0)
+               .where(small_pv, 1)
+               .where(large_pv, 2)
+               .rename("SolarSuitability"))
 
-Map.add_legend(
-    title="Renewable Energy Suitability",
-    labels=['Solar Potential', 'Wind Potential'],
-    colors=[(255,165,0), (0,0,255)]
-)
+# FOLIUM MAP DISPLAY
+def add_ee_layer(self, ee_object, vis_params, name):
+    map_id_dict = ee.Image(ee_object).getMapId(vis_params)
+    folium.raster_layers.TileLayer(
+        tiles=map_id_dict['tile_fetcher'].url_format,
+        attr='Google Earth Engine',
+        name=name,
+        overlay=True,
+        control=True
+    ).add_to(self)
 
+folium.Map.add_ee_layer = add_ee_layer
 
-Map
+# Center map on ROI
+center = geometry.centroid().coordinates().getInfo()
+map = folium.Map(location=[center[1], center[0]], zoom_start=9)
+
+# Add layers
+s2_vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
+map.add_ee_layer(s2_clean, s2_vis, "Sentinel-2")
+
+palette = ["#9e9e9e", "#ffd54f", "#fb8c00"]
+classified_vis = {"min": 0, "max": 2, "palette": palette}
+map.add_ee_layer(solar_class, classified_vis, "Solar PV Suitability")
+
+roi_vis = {"color": "blue", "fillColor": "00000000"}
+map.add_ee_layer(roi, roi_vis, "Khandesh Boundary")
+
+map
