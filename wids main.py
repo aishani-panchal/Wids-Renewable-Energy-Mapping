@@ -8,10 +8,26 @@ except:
     ee.Authenticate()
     ee.Initialize(project='wids-earth-engine')
 
-# ROI
-roi = ee.Geometry.Rectangle([74.0, 20.5, 75.5, 21.5])
+# Featured collection to mark the boundaries of Khandesh corridor
+#this corridor is in maharashtra with 3 districts: ["Jalgaon", "Dhule", "Nandurbar"]
+gaul = ee.FeatureCollection("FAO/GAUL/2015/level2")
+maharashtra = gaul.filter(ee.Filter.eq("ADM1_NAME", "Maharashtra"))
+districts = ["Jalgaon", "Dhule", "Nandurbar"]
 
-# NEW: Sentinel-2 cloud masking function (borrowed conceptually)
+khandesh = maharashtra.filter(
+    ee.Filter.inList("ADM2_NAME", districts)
+)
+boundary_only = khandesh.style(
+    **{
+        "color": "000000",      # outline color (only want the outline , no color)
+        "width": 2,
+        "fillColor": "00000000" # transparent fill (RGBA)
+    }
+)
+# storing roi as this collection
+roi = khandesh
+
+# NEW: Sentinel-2 cloud masking function
 def mask_s2_sr(image):
     qa = image.select('QA60')
     cloud_bit_mask = 1 << 10
@@ -24,10 +40,10 @@ def mask_s2_sr(image):
 s2 = (
     ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
     .filterBounds(roi)
-    .filterDate('2023-01-01', '2023-05-30')
+    .filterDate('2023-01-01', '2024-01-01')
     .map(mask_s2_sr)    
     .median()
-    .clip(roi)
+    .clip(roi.geometry())
 )
 
 # DEM & slope
@@ -97,5 +113,6 @@ Map.add_legend(
     labels=['Solar Potential', 'Wind Potential'],
     colors=[(255,165,0), (0,0,255)]
 )
+
 
 Map
