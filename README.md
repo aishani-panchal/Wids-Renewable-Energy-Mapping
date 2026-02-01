@@ -23,15 +23,14 @@ Produce a visual map highlighting zones with higher solar or wind potential
   I created a set of features that are more meaningful for solar-site assessment
   Sentinel-2 bands: B2, B3, B4, B8, NDVI, which helps indicate vegetation cover, Slope and     Aspect from elevation data
 6. Method I used: Training samples created using polygons
-   Random Forest classifier used for suitability mapping
-   Solar zones are limited to low-slope areas
-   Wind zones are restricted to higher wind speeds to remove unrealistic problems
+  Tree boosting  classifier used for suitability mapping
+  
 7. Final output
    The result is an interactive map showing:
      Base satellite imagery
-     Potential solar zones (orange)
-     Potential wind zones (blue)
-8. Limitations 
+     Potential large solar zones (orange)
+     Potential small solar zones (yellow)
+9. Limitations 
    No external ground-truth dataset is used
    Accuracy assessment is internal
 
@@ -40,8 +39,6 @@ Since no external ground-truth dataset exists for renewable energy suitability, 
 The labelled samples are randomly split into:
 70% training data
 30% validation data
-
-A Random Forest classifier is trained using the training subset and evaluated on the unseen validation samples.
 
 Metrics used
 1. Confusion Matrix – to examine class-wise performance
