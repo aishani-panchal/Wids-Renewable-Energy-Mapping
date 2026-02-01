@@ -1,6 +1,6 @@
 # Wids-Midterm (Renewable Energy Smart Mapping)
 This project explores how satellite imagery, climate data, and machine learning can be combined to identify areas with potential for solar and wind energy.
-The workflow is implemented using Google Earth Engine and Python. 
+The workflow is implemented using Google Earth Engine and Python and the results are visualized through an interactive Folium map
 
 This project attempts to:
 Combine satellite data, terrain, and climate information
@@ -9,23 +9,29 @@ Produce a visual map highlighting zones with higher solar or wind potential
 
 1. Study Area
    Region: Khandesh Corridor, Maharashtra, India
+   this includes 3 districs (Jalgaon, Dhule, Nandurbar)
    Coordinates: [74.0, 20.5, 75.5, 21.5]
-2. Data used
+2. Data used:I used a combination of satellite and climate products:
    Sentinel-2: Optical imagery (cloud-masked)
-   SRTM DEM: Terrain and slope
-   ERA5-Land: Wind speed and solar radiation
-3. Features created
-   Instead of relying only on raw imagery, several meaningful features are derived: Spectral bands (B2, B3, B4, B8),NDVI (vegetation indicator), Slope (from elevation), Wind speed, Global Horizontal Irradiance (GHI)
-4. Method I used: Training samples created using polygons
+   Cloud Score Plus to remove cloudy pixels more effectively
+   SRTM Digital Elevation Model to derive terrain features like slope and aspect
+   ERA5-Land to estimateincoming solar radiation (used as a proxy for GHI)
+   ESA WorldCover 2020 to understand land-use and land-cover patterns
+
+3. Time: All data were collected for the period January 2023 to January 2024.
+4. Features created
+  I created a set of features that are more meaningful for solar-site assessment
+  Sentinel-2 bands: B2, B3, B4, B8, NDVI, which helps indicate vegetation cover, Slope and     Aspect from elevation data
+6. Method I used: Training samples created using polygons
    Random Forest classifier used for suitability mapping
    Solar zones are limited to low-slope areas
    Wind zones are restricted to higher wind speeds to remove unrealistic problems
-5. Final output
+7. Final output
    The result is an interactive map showing:
      Base satellite imagery
      Potential solar zones (orange)
      Potential wind zones (blue)
-7. Limitations 
+8. Limitations 
    No external ground-truth dataset is used
    Accuracy assessment is internal
 
